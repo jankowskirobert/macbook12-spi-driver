@@ -2,19 +2,45 @@ Input driver for the SPI keyboard / trackpad found on 12" MacBooks (2015 and lat
 
 The keyboard / trackpad driver here is now included in the kernel as of v5.3.
 
+## Kernel 6.14+ Compatibility
+
+This driver has been updated for compatibility with Linux kernel 6.14 and later. Key changes include:
+
+### API Updates
+- **SPI Transfer Delays**: Updated from `delay_usecs` to the new `delay` structure
+- **Driver Remove Callbacks**: All driver remove functions now return `void` instead of `int`
+- **EFI Variable API**: Deprecated efivar functions have been disabled (backlight level save/restore functionality affected)
+- **IIO Trigger API**: Simplified IIO implementation due to significant API changes (advanced trigger functionality removed)
+- **GUID/UUID API**: Updated to use modern `guid_t` and `guid_parse()` functions
+
+### Removed Features
+- **Legacy Kernel Support**: All compatibility code for kernels < 6.14 has been removed
+- **EFI Backlight Persistence**: Saving/restoring keyboard backlight level to EFI variables is disabled
+- **IIO Triggered Buffers**: Advanced IIO trigger functionality simplified for compatibility
+
+### Requirements for Kernel 6.14+
+- Standard SPI driver support: `CONFIG_SPI_PXA2XX=m` and `CONFIG_SPI_PXA2XX_PCI=m`
+- For ALS functionality: IIO subsystem modules must be available
+- Intel LPSS support: `CONFIG_MFD_INTEL_LPSS_PCI=m`
+
 NOTE:
 -----
-The touchbar driver was refactored in late 2018; if you're upgrading from the `appletb` driver, please see the [Upgrading](#upgrading) section; if you're running a kernel before 4.16 then please check out the [legacy](../../tree/touchbar-driver-monolithic) branch instead.
+The touchbar driver was refactored in late 2018; if you're upgrading from the `appletb` driver, please see the [Upgrading](#upgrading) section.
 
-Using it:
----------
-If you're on any MacBook or MacBook Pro other than MacBook8,1 (2015), and you're running a kernel before 4.11, then you'll need to boot the kernel with `intremap=nosid`. In all cases make sure you don't have `noapic` in your kernel options.
+Using it (Kernel 6.14+):
+------------------------
+For kernel 6.14 and later, ensure the following modules are available:
 
-On the 2015 MacBook you need to (re)compile your kernel with `CONFIG_X86_INTEL_LPSS=n` if running a kernel before 4.14. And on all kernels you need ensure the `spi_pxa2xx_platform` and `spi_pxa2xx_pci` modules are loaded too (if you don't have those module, rebuild your kernel with `CONFIG_SPI_PXA2XX=m` and `CONFIG_SPI_PXA2XX_PCI=m`).
+- `spi_pxa2xx_platform` and `spi_pxa2xx_pci` (rebuild kernel with `CONFIG_SPI_PXA2XX=m` and `CONFIG_SPI_PXA2XX_PCI=m` if needed)
+- `intel_lpss_pci` (rebuild kernel with `CONFIG_MFD_INTEL_LPSS_PCI=m` if needed)
 
-On all other MacBook's and MacBook Pros you need to instead make sure both the `spi_pxa2xx_platform` and `intel_lpss_pci` modules are loaded (if these don't exist, you need to (re)compile your kernel with `CONFIG_SPI_PXA2XX=m` and `CONFIG_MFD_INTEL_LPSS_PCI=m`).
+On MacBook8,1 (2015), you need to ensure the `spi_pxa2xx_platform` and `spi_pxa2xx_pci` modules are loaded.
 
-For best results everywhere, make sure all three modules (this `applespi` driver plus the two core ones mentioned above) are present in your initramfs/initrd so that the keyboard is functional by the time the prompt for the disk password appears. Also, having them loaded early also appears to remove the need for the `irqpoll` kernel parameter on MacBook8,1's.
+On all other MacBooks and MacBook Pros, make sure both the `spi_pxa2xx_platform` and `intel_lpss_pci` modules are loaded.
+
+For best results, include this `applespi` driver and the required core modules in your initramfs/initrd for early keyboard functionality.
+
+**Note**: Legacy kernel version-specific workarounds (intremap=nosid, CONFIG_X86_INTEL_LPSS=n) are no longer applicable for kernel 6.14+.
 
 Lastly, please see the [Keyboard/Touchpad/Touchbar](https://gist.github.com/roadrunner2/1289542a748d9a104e7baec6a92f9cd7#keyboardtouchpadtouchbar) section of my gist for recommended user-space configurations and more details.
 
