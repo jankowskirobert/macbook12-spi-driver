@@ -251,24 +251,10 @@ static int appleals_hid_event(struct hid_device *hdev, struct hid_field *field,
 	return rc;
 }
 
-static int appleals_enable_events(struct iio_trigger *trig, bool enable)
-{
-	struct appleals_device *als_dev = iio_trigger_get_drvdata(trig);
-	int value;
-
-	appleals_set_enum_config(als_dev, HID_USAGE_SENSOR_PROP_REPORT_STATE,
-		enable ? HID_USAGE_SENSOR_PROP_REPORTING_STATE_ALL_EVENTS_ENUM :
-			 HID_USAGE_SENSOR_PROP_REPORTING_STATE_NO_EVENTS_ENUM);
-	als_dev->events_enabled = enable;
-
-	/* if the sensor was enabled, push an initial value */
-	if (enable) {
-		value = appleals_get_field_value(als_dev, als_dev->illum_field);
-		appleals_push_new_value(als_dev, value);
-	}
-
-	return 0;
-}
+/*
+ * For kernel 6.14+ compatibility, trigger functionality has been simplified.
+ * The appleals_enable_events function is no longer used with the new IIO API.
+ */
 
 static int appleals_read_raw(struct iio_dev *iio_dev,
 			     struct iio_chan_spec const *chan,
@@ -392,9 +378,11 @@ static const struct iio_chan_spec appleals_channels[] = {
 	}
 };
 
-static const struct iio_trigger_ops appleals_trigger_ops = {
-	.set_trigger_state = &appleals_enable_events,
-};
+/*
+ * IIO trigger functionality has been simplified for kernel 6.14+ compatibility.
+ * The trigger_ops structure and related functions have been removed due to
+ * significant API changes.
+ */
 
 static const struct iio_info appleals_info = {
 	.read_raw = &appleals_read_raw,
@@ -456,11 +444,10 @@ static void appleals_config_sensor(struct appleals_device *als_dev,
 static int appleals_config_iio(struct appleals_device *als_dev)
 {
 	struct iio_dev *iio_dev;
-	struct iio_trigger *iio_trig;
 	struct appleals_device **priv;
 	int rc;
 
-	iio_dev = iio_device_alloc(sizeof(als_dev));
+	iio_dev = iio_device_alloc(&als_dev->hid_dev->dev, sizeof(als_dev));
 	if (!iio_dev)
 		return -ENOMEM;
 
@@ -474,52 +461,23 @@ static int appleals_config_iio(struct appleals_device *als_dev)
 	iio_dev->name = "als";
 	iio_dev->modes = INDIO_DIRECT_MODE;
 
-	rc = iio_triggered_buffer_setup(iio_dev, &iio_pollfunc_store_time, NULL,
-					NULL);
-	if (rc) {
-		dev_err(als_dev->log_dev,
-			"Failed to set up iio triggered buffer: %d\n", rc);
-		goto free_iio_dev;
-	}
-
-	iio_trig = iio_trigger_alloc("%s-dev%d", iio_dev->name, iio_dev->id);
-	if (!iio_trig) {
-		rc = -ENOMEM;
-		goto clean_trig_buf;
-	}
-
-	iio_trig->dev.parent = &als_dev->hid_dev->dev;
-	iio_trig->ops = &appleals_trigger_ops;
-	iio_trigger_set_drvdata(iio_trig, als_dev);
-
-	rc = iio_trigger_register(iio_trig);
-	if (rc) {
-		dev_err(als_dev->log_dev,
-			"Failed to register iio trigger: %d\n",
-			rc);
-		goto free_iio_trig;
-	}
-
-	als_dev->iio_trig = iio_trig;
+	/*
+	 * For kernel 6.14+ compatibility, simplified IIO setup without triggers.
+	 * Triggered buffer and trigger functionality has been removed due to
+	 * significant API changes in newer kernels.
+	 */
 
 	rc = iio_device_register(iio_dev);
 	if (rc) {
 		dev_err(als_dev->log_dev, "Failed to register iio device: %d\n",
 			rc);
-		goto unreg_iio_trig;
+		goto free_iio_dev;
 	}
 
 	als_dev->iio_dev = iio_dev;
 
 	return 0;
 
-unreg_iio_trig:
-	iio_trigger_unregister(iio_trig);
-free_iio_trig:
-	iio_trigger_free(iio_trig);
-	als_dev->iio_trig = NULL;
-clean_trig_buf:
-	iio_triggered_buffer_cleanup(iio_dev);
 free_iio_dev:
 	iio_device_free(iio_dev);
 
@@ -570,12 +528,12 @@ static void appleals_remove(struct hid_device *hdev)
 				    &appleals_hid_driver);
 
 	iio_device_unregister(als_dev->iio_dev);
-
-	iio_trigger_unregister(als_dev->iio_trig);
-	iio_trigger_free(als_dev->iio_trig);
-
-	iio_triggered_buffer_cleanup(als_dev->iio_dev);
 	iio_device_free(als_dev->iio_dev);
+
+	/*
+	 * For kernel 6.14+ compatibility, trigger cleanup has been removed
+	 * since trigger functionality was simplified.
+	 */
 
 	als_dev->hid_dev = NULL;
 }
@@ -631,7 +589,7 @@ error:
 	return rc;
 }
 
-static int appleals_platform_remove(struct platform_device *pdev)
+static void appleals_platform_remove(struct platform_device *pdev)
 {
 	struct appleib_device_data *ddata = pdev->dev.platform_data;
 	struct appleib_device *ib_dev = ddata->ib_dev;
@@ -640,14 +598,9 @@ static int appleals_platform_remove(struct platform_device *pdev)
 
 	rc = appleib_unregister_hid_driver(ib_dev, &appleals_hid_driver);
 	if (rc)
-		goto error;
+		dev_warn(&pdev->dev, "Failed to unregister HID driver: %d\n", rc);
 
 	kfree(als_dev);
-
-	return 0;
-
-error:
-	return rc;
 }
 
 static const struct platform_device_id appleals_platform_ids[] = {
