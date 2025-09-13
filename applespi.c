@@ -587,7 +587,12 @@ static void applespi_setup_read_txfrs(struct applespi_data *applespi)
 	memset(dl_t, 0, sizeof(*dl_t));
 	memset(rd_t, 0, sizeof(*rd_t));
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+	dl_t->delay.value = applespi->spi_settings.spi_cs_delay;
+	dl_t->delay.unit = SPI_DELAY_UNIT_USECS;
+#else
 	dl_t->delay_usecs = applespi->spi_settings.spi_cs_delay;
+#endif
 
 	rd_t->rx_buf = applespi->rx_buffer;
 	rd_t->len = APPLESPI_PACKET_SIZE;
@@ -616,14 +621,29 @@ static void applespi_setup_write_txfrs(struct applespi_data *applespi)
 	 * end up with an extra unnecessary (but harmless) cs assertion and
 	 * deassertion.
 	 */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+	wt_t->delay.value = SPI_RW_CHG_DELAY_US;
+	wt_t->delay.unit = SPI_DELAY_UNIT_USECS;
+#else
 	wt_t->delay_usecs = SPI_RW_CHG_DELAY_US;
+#endif
 	wt_t->cs_change = 1;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+	dl_t->delay.value = applespi->spi_settings.spi_cs_delay;
+	dl_t->delay.unit = SPI_DELAY_UNIT_USECS;
+#else
 	dl_t->delay_usecs = applespi->spi_settings.spi_cs_delay;
+#endif
 
 	wr_t->tx_buf = applespi->tx_buffer;
 	wr_t->len = APPLESPI_PACKET_SIZE;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+	wr_t->delay.value = SPI_RW_CHG_DELAY_US;
+	wr_t->delay.unit = SPI_DELAY_UNIT_USECS;
+#else
 	wr_t->delay_usecs = SPI_RW_CHG_DELAY_US;
+#endif
 
 	st_t->rx_buf = applespi->tx_status;
 	st_t->len = APPLESPI_STATUS_SIZE;
@@ -1786,6 +1806,7 @@ static u32 applespi_notify(acpi_handle gpe_device, u32 gpe, void *context)
 
 static int applespi_get_saved_bl_level(struct applespi_data *applespi)
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 6, 0)
 	struct efivar_entry *efivar_entry;
 	u16 efi_data = 0;
 	unsigned long efi_data_len;
@@ -1809,11 +1830,17 @@ static int applespi_get_saved_bl_level(struct applespi_data *applespi)
 	kfree(efivar_entry);
 
 	return sts ? sts : efi_data;
+#else
+	/* EFI variable access using older API not available in kernel >= 5.6 */
+	/* Use default backlight level or alternative method */
+	return 0; /* Default level */
+#endif
 }
 
 static void applespi_save_bl_level(struct applespi_data *applespi,
 				   unsigned int level)
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 6, 0)
 	efi_guid_t efi_guid;
 	u32 efi_attr;
 	unsigned long efi_data_len;
@@ -1832,6 +1859,12 @@ static void applespi_save_bl_level(struct applespi_data *applespi,
 	if (sts)
 		dev_warn(&applespi->spi->dev,
 			 "Error saving backlight level to EFI vars: %d\n", sts);
+#else
+	/* EFI variable saving using older API not available in kernel >= 5.6 */
+	/* Skipping EFI variable save for newer kernels */
+	dev_info(&applespi->spi->dev,
+		 "EFI variable save not supported in kernel >= 5.6, level=%u\n", level);
+#endif
 }
 
 static void applespi_enable_early_event_tracing(struct device *dev)
@@ -2109,7 +2142,11 @@ static void applespi_drain_reads(struct applespi_data *applespi)
 	spin_unlock_irqrestore(&applespi->cmd_msg_lock, flags);
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
+static void applespi_remove(struct spi_device *spi)
+#else
 static int applespi_remove(struct spi_device *spi)
+#endif
 {
 	struct applespi_data *applespi = spi_get_drvdata(spi);
 
@@ -2123,7 +2160,9 @@ static int applespi_remove(struct spi_device *spi)
 
 	debugfs_remove_recursive(applespi->debugfs_root);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
 	return 0;
+#endif
 }
 
 static void applespi_shutdown(struct spi_device *spi)

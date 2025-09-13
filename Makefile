@@ -1,7 +1,8 @@
 obj-m += applespi.o
 obj-m += apple-ibridge.o
 obj-m += apple-ib-tb.o
-obj-m += apple-ib-als.o
+# Temporarily disable apple-ib-als due to IIO API compatibility issues in kernel 6.0+
+# obj-m += apple-ib-als.o
 
 CFLAGS_applespi.o = -I$(src)	# for tracing
 

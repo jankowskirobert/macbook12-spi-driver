@@ -39,6 +39,7 @@
 #include <linux/usb/ch9.h>
 #include <linux/usb.h>
 #include <linux/workqueue.h>
+#include <linux/version.h>
 
 #include "apple-ibridge.h"
 
@@ -1259,7 +1260,11 @@ error:
 	return rc;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
+static void appletb_platform_remove(struct platform_device *pdev)
+#else
 static int appletb_platform_remove(struct platform_device *pdev)
+#endif
 {
 	struct appleib_device_data *ddata = pdev->dev.platform_data;
 	struct appleib_device *ib_dev = ddata->ib_dev;
@@ -1272,10 +1277,19 @@ static int appletb_platform_remove(struct platform_device *pdev)
 
 	appletb_free_device(tb_dev);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
 	return 0;
+#else
+	return;
+#endif
 
 error:
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
 	return rc;
+#else
+	/* In newer kernels, platform remove can't return error */
+	dev_err(&pdev->dev, "Failed to unregister HID driver: %d\n", rc);
+#endif
 }
 
 static const struct platform_device_id appletb_platform_ids[] = {

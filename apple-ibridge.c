@@ -843,13 +843,19 @@ static int appleib_probe(struct acpi_device *acpi)
 	return 0;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
+static void appleib_remove(struct acpi_device *acpi)
+#else
 static int appleib_remove(struct acpi_device *acpi)
+#endif
 {
 	struct appleib_device *ib_dev = acpi_driver_data(acpi);
 
 	hid_unregister_driver(&ib_dev->ib_driver);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0)
 	return 0;
+#endif
 }
 
 static int appleib_suspend(struct device *dev)
@@ -898,7 +904,6 @@ MODULE_DEVICE_TABLE(acpi, appleib_acpi_match);
 static struct acpi_driver appleib_driver = {
 	.name		= "apple-ibridge",
 	.class		= "topcase", /* ? */
-	.owner		= THIS_MODULE,
 	.ids		= appleib_acpi_match,
 	.ops		= {
 		.add		= appleib_probe,
