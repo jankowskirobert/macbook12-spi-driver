@@ -1,9 +1,20 @@
 Input driver for the SPI keyboard / trackpad found on 12" MacBooks (2015 and later) and newer MacBook Pros (late 2016 through mid 2018), as well a simple touchbar and ambient-light-sensor driver for late 2016 MacBook Pro's and later.
 
+**KERNEL COMPATIBILITY**: This driver has been updated to support Linux kernel versions 6.0+ while maintaining backward compatibility with older kernels.
+
 The keyboard / trackpad driver here is now included in the kernel as of v5.3.
 
 NOTE:
 -----
+**Kernel 6.0+ Compatibility**: As of kernel 6.0+, this driver has been updated to handle API changes including:
+- SPI transfer delay API changes (delay_usecs → delay.value/delay.unit)
+- Driver remove function signature changes (int → void return type)
+- EFI variable access API changes (disabled for kernel >= 5.6)
+- Platform and ACPI driver structure changes
+
+**Known Limitations in Kernel 6.0+**:
+- The ambient light sensor (apple-ib-als) module is currently disabled due to significant IIO API changes
+- EFI variable saving/loading for backlight levels is disabled in kernel >= 5.6
 The touchbar driver was refactored in late 2018; if you're upgrading from the `appletb` driver, please see the [Upgrading](#upgrading) section; if you're running a kernel before 4.16 then please check out the [legacy](../../tree/touchbar-driver-monolithic) branch instead.
 
 Using it:

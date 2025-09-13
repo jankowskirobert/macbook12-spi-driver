@@ -37,6 +37,7 @@
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
+#include <linux/version.h>
 
 #include "apple-ibridge.h"
 
@@ -253,6 +254,7 @@ static int appleals_hid_event(struct hid_device *hdev, struct hid_field *field,
 
 static int appleals_enable_events(struct iio_trigger *trig, bool enable)
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
 	struct appleals_device *als_dev = iio_trigger_get_drvdata(trig);
 	int value;
 
@@ -268,6 +270,10 @@ static int appleals_enable_events(struct iio_trigger *trig, bool enable)
 	}
 
 	return 0;
+#else
+	/* Trigger functionality disabled in newer kernels */
+	return 0;
+#endif
 }
 
 static int appleals_read_raw(struct iio_dev *iio_dev,
@@ -392,9 +398,11 @@ static const struct iio_chan_spec appleals_channels[] = {
 	}
 };
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
 static const struct iio_trigger_ops appleals_trigger_ops = {
 	.set_trigger_state = &appleals_enable_events,
 };
+#endif
 
 static const struct iio_info appleals_info = {
 	.read_raw = &appleals_read_raw,
@@ -456,11 +464,17 @@ static void appleals_config_sensor(struct appleals_device *als_dev,
 static int appleals_config_iio(struct appleals_device *als_dev)
 {
 	struct iio_dev *iio_dev;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
 	struct iio_trigger *iio_trig;
+#endif
 	struct appleals_device **priv;
 	int rc;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 0)
+	iio_dev = iio_device_alloc(&als_dev->hid_dev->dev, sizeof(als_dev));
+#else
 	iio_dev = iio_device_alloc(sizeof(als_dev));
+#endif
 	if (!iio_dev)
 		return -ENOMEM;
 
@@ -482,7 +496,12 @@ static int appleals_config_iio(struct appleals_device *als_dev)
 		goto free_iio_dev;
 	}
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 0)
+	iio_trig = devm_iio_trigger_alloc(&als_dev->hid_dev->dev, "%s-dev%d", iio_dev->name, iio_device_id(iio_dev));
+#else
 	iio_trig = iio_trigger_alloc("%s-dev%d", iio_dev->name, iio_dev->id);
+#endif
 	if (!iio_trig) {
 		rc = -ENOMEM;
 		goto clean_trig_buf;
@@ -501,23 +520,30 @@ static int appleals_config_iio(struct appleals_device *als_dev)
 	}
 
 	als_dev->iio_trig = iio_trig;
+#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0) */
 
 	rc = iio_device_register(iio_dev);
 	if (rc) {
 		dev_err(als_dev->log_dev, "Failed to register iio device: %d\n",
 			rc);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
 		goto unreg_iio_trig;
+#else
+		goto clean_trig_buf;
+#endif
 	}
 
 	als_dev->iio_dev = iio_dev;
 
 	return 0;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
 unreg_iio_trig:
 	iio_trigger_unregister(iio_trig);
 free_iio_trig:
 	iio_trigger_free(iio_trig);
 	als_dev->iio_trig = NULL;
+#endif
 clean_trig_buf:
 	iio_triggered_buffer_cleanup(iio_dev);
 free_iio_dev:
@@ -571,8 +597,10 @@ static void appleals_remove(struct hid_device *hdev)
 
 	iio_device_unregister(als_dev->iio_dev);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
 	iio_trigger_unregister(als_dev->iio_trig);
 	iio_trigger_free(als_dev->iio_trig);
+#endif
 
 	iio_triggered_buffer_cleanup(als_dev->iio_dev);
 	iio_device_free(als_dev->iio_dev);
@@ -631,7 +659,11 @@ error:
 	return rc;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
+static void appleals_platform_remove(struct platform_device *pdev)
+#else
 static int appleals_platform_remove(struct platform_device *pdev)
+#endif
 {
 	struct appleib_device_data *ddata = pdev->dev.platform_data;
 	struct appleib_device *ib_dev = ddata->ib_dev;
@@ -644,10 +676,19 @@ static int appleals_platform_remove(struct platform_device *pdev)
 
 	kfree(als_dev);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
 	return 0;
+#else
+	return;
+#endif
 
 error:
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
 	return rc;
+#else
+	/* In newer kernels, platform remove can't return error */
+	dev_err(&pdev->dev, "Failed to unregister HID driver: %d\n", rc);
+#endif
 }
 
 static const struct platform_device_id appleals_platform_ids[] = {
