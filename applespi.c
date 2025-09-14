@@ -933,6 +933,19 @@ static int applespi_enable_spi(struct applespi_data *applespi)
 	return 0;
 }
 
+static void applespi_disable_spi(struct applespi_data *applespi)
+{
+	/*
+	 * Disable SPI interface for power management symmetry.
+	 * Currently this is a no-op as there's no documented ACPI method
+	 * to explicitly disable SPI on these devices. The SIEN(0) method
+	 * exists but its behavior is not well-documented and may have
+	 * unintended side effects, so we keep this as a placeholder for
+	 * future power management improvements.
+	 */
+	dev_dbg(&applespi->spi->dev, "SPI disable requested (no-op)\n");
+}
+
 static int applespi_send_cmd_msg(struct applespi_data *applespi);
 
 static void applespi_msg_complete(struct applespi_data *applespi,
@@ -2137,8 +2150,6 @@ static void applespi_drain_reads(struct applespi_data *applespi)
 				    applespi->cmd_msg_lock,
 				    msecs_to_jiffies(3000));
 
-	applespi->suspended = true;
-
 	spin_unlock_irqrestore(&applespi->cmd_msg_lock, flags);
 }
 
@@ -2187,7 +2198,10 @@ static int __maybe_unused applespi_suspend(struct device *dev)
 	struct spi_device *spi = to_spi_device(dev);
 	struct applespi_data *applespi = spi_get_drvdata(spi);
 	acpi_status acpi_sts;
+	unsigned long flags;
 	int sts;
+
+	dev_dbg(&applespi->spi->dev, "Starting suspend sequence\n");
 
 	/* turn off caps-lock - it'll stay on otherwise */
 	sts = applespi_set_capsl_led(applespi, false);
@@ -2195,16 +2209,44 @@ static int __maybe_unused applespi_suspend(struct device *dev)
 		dev_warn(&applespi->spi->dev,
 			 "Failed to turn off caps-lock led (%d)\n", sts);
 
-	applespi_drain_writes(applespi);
+	/*
+	 * Set suspended and drain flags immediately to block new activity.
+	 * This must happen before disabling the GPE to prevent races where
+	 * new transactions start after draining but before GPE disable.
+	 */
+	spin_lock_irqsave(&applespi->cmd_msg_lock, flags);
+	applespi->suspended = true;
+	applespi->drain = true;
+	spin_unlock_irqrestore(&applespi->cmd_msg_lock, flags);
 
-	/* disable the interrupt */
+	dev_dbg(&applespi->spi->dev, "Suspend: flags set, disabling GPE\n");
+
+	/*
+	 * Disable the interrupt BEFORE draining to prevent late IRQs from
+	 * racing with the drain operations and potentially leaving the
+	 * device in an inconsistent state.
+	 */
 	acpi_sts = acpi_disable_gpe(NULL, applespi->gpe);
 	if (ACPI_FAILURE(acpi_sts))
 		dev_err(&applespi->spi->dev,
 			"Failed to disable GPE handler for GPE %d: %s\n",
 			applespi->gpe, acpi_format_exception(acpi_sts));
 
+	dev_dbg(&applespi->spi->dev, "Suspend: GPE disabled, draining writes\n");
+
+	/* Drain pending writes and reads with interrupts gated */
+	applespi_drain_writes(applespi);
+
+	dev_dbg(&applespi->spi->dev, "Suspend: writes drained, draining reads\n");
+
 	applespi_drain_reads(applespi);
+
+	dev_dbg(&applespi->spi->dev, "Suspend: reads drained, disabling SPI\n");
+
+	/* Disable SPI interface for power management symmetry */
+	applespi_disable_spi(applespi);
+
+	dev_dbg(&applespi->spi->dev, "Suspend sequence complete\n");
 
 	return 0;
 }
@@ -2216,7 +2258,13 @@ static int __maybe_unused applespi_resume(struct device *dev)
 	acpi_status acpi_sts;
 	unsigned long flags;
 
-	/* ensure our flags and state reflect a newly resumed device */
+	dev_dbg(&applespi->spi->dev, "Starting resume sequence\n");
+
+	/*
+	 * Reset bookkeeping flags but keep suspended=true until the device
+	 * is fully initialized. This prevents early activity from racing
+	 * with initialization.
+	 */
 	spin_lock_irqsave(&applespi->cmd_msg_lock, flags);
 
 	applespi->drain = false;
@@ -2225,23 +2273,50 @@ static int __maybe_unused applespi_resume(struct device *dev)
 	applespi->cmd_msg_queued = 0;
 	applespi->read_active = false;
 	applespi->write_active = false;
-
-	applespi->suspended = false;
+	/* Note: keeping suspended = true until device is fully ready */
 
 	spin_unlock_irqrestore(&applespi->cmd_msg_lock, flags);
 
-	/* switch on the SPI interface */
+	dev_dbg(&applespi->spi->dev, "Resume: flags reset, enabling SPI\n");
+
+	/*
+	 * Enable the SPI interface while interrupts are still disabled.
+	 * This includes the stabilization delay to ensure the interface
+	 * is ready before proceeding with initialization.
+	 */
 	applespi_enable_spi(applespi);
 
-	/* re-enable the interrupt */
+	dev_dbg(&applespi->spi->dev, "Resume: SPI enabled, initializing device\n");
+
+	/*
+	 * Initialize the device (switch to multitouch mode) BEFORE enabling
+	 * the GPE. This prevents early interrupts from racing with the
+	 * initialization process and potentially leaving the device in an
+	 * inconsistent state.
+	 */
+	applespi_init(applespi, true);
+
+	dev_dbg(&applespi->spi->dev, "Resume: device initialized, enabling GPE\n");
+
+	/* Enable the interrupt only after successful initialization */
 	acpi_sts = acpi_enable_gpe(NULL, applespi->gpe);
 	if (ACPI_FAILURE(acpi_sts))
 		dev_err(&applespi->spi->dev,
 			"Failed to re-enable GPE handler for GPE %d: %s\n",
 			applespi->gpe, acpi_format_exception(acpi_sts));
 
-	/* switch the touchpad into multitouch mode */
-	applespi_init(applespi, true);
+	dev_dbg(&applespi->spi->dev, "Resume: GPE enabled, clearing suspended flag\n");
+
+	/*
+	 * Clear the suspended flag last, only after the device is fully
+	 * initialized and interrupts are enabled. This ensures no new
+	 * activity can start until the device is completely ready.
+	 */
+	spin_lock_irqsave(&applespi->cmd_msg_lock, flags);
+	applespi->suspended = false;
+	spin_unlock_irqrestore(&applespi->cmd_msg_lock, flags);
+
+	dev_dbg(&applespi->spi->dev, "Resume sequence complete\n");
 
 	return 0;
 }
